@@ -31,34 +31,34 @@ def IOU_inverse(y_true, y_pred):
 
 
 ### Unet Building Blocks ### 
-def downsample_block(IN, filters, activation, batchnorm, droprate): 
+def downsample_block(IN, filters, activation, batchnorm, droprate, regularizer): 
     '''downsampling block - downslope + pit of the Unet '''
-    CONV = Conv2D(filters, (3, 3), activation = activation, padding = 'same')(IN)
+    CONV = Conv2D(filters, (3, 3), activation = activation, padding = 'same',  kernel_regularizer=regularizer)(IN)
     CONV = BatchNormalization()(CONV) if batchnorm else CONV
     CONV = Dropout(droprate)(CONV) if droprate is not None else CONV
-    CONV = Conv2D(filters, (3, 3), activation = activation, padding = 'same')(CONV)
+    CONV = Conv2D(filters, (3, 3), activation = activation, padding = 'same', kernel_regularizer=regularizer)(CONV)
     CONV = BatchNormalization()(CONV) if batchnorm else CONV
     OUT = MaxPooling2D((2, 2))(CONV)
     
     return CONV, OUT 
 
 
-def upsample_block(IN, DOWN, filters, activation, batchnorm, droprate): 
+def upsample_block(IN, DOWN, filters, activation, batchnorm, droprate, regularizer): 
     '''upsampling block - upslope of the Unet
     arg DOWN must mirror size of downslope'''
-    UP = Conv2DTranspose(filters, (2, 2), strides=(2, 2), padding='same') (IN)
+    UP = Conv2DTranspose(filters, (2, 2), strides=(2, 2), padding='same',  kernel_regularizer=regularizer) (IN)
     UP = concatenate([UP, DOWN])
-    OUT = Conv2D(filters, (3, 3), activation=activation, padding='same') (UP)
+    OUT = Conv2D(filters, (3, 3), activation=activation, padding='same',  kernel_regularizer=regularizer) (UP)
     OUT = BatchNormalization()(OUT) if batchnorm else OUT
     OUT = Dropout(droprate)(OUT) if droprate is not None else OUT
-    OUT = Conv2D(filters, (3, 3), activation=activation, padding='same') (OUT)
+    OUT = Conv2D(filters, (3, 3), activation=activation, padding='same',  kernel_regularizer=regularizer) (OUT)
     OUT = BatchNormalization()(OUT) if batchnorm else OUT
     
     return OUT
 
 
 
-def build_model(scale_factor = 3, activation='elu', learn_rate = 0.001, batchnorm=False, droprate = None, verbose=0):
+def build_model(scale_factor = 3, activation='elu', learn_rate = 0.001, batchnorm=False, droprate = None, regularizer = None, verbose=0):
     '''Build a Unet! 
     https://arxiv.org/abs/1505.04597
     https://github.com/pietz/unet-keras/blob/master/unet.py
@@ -86,17 +86,17 @@ def build_model(scale_factor = 3, activation='elu', learn_rate = 0.001, batchnor
     norm = Lambda(lambda x: (x/255-0.5))(inputs)
 
     '''DOWNSAMPLE '''
-    c1, p1 = downsample_block(norm, 64, activation, batchnorm, droprate)
-    c2, p2 = downsample_block(p1, 128, activation, batchnorm, droprate)
-    c3, p3 = downsample_block(p2, 256, activation, batchnorm, droprate)
-    c4, p4 = downsample_block(p3, 512, activation, batchnorm, droprate)
+    c1, p1 = downsample_block(norm, 64, activation, batchnorm, droprate, regularizer)
+    c2, p2 = downsample_block(p1, 128, activation, batchnorm, droprate, regularizer)
+    c3, p3 = downsample_block(p2, 256, activation, batchnorm, droprate, regularizer)
+    c4, p4 = downsample_block(p3, 512, activation, batchnorm, droprate, regularizer)
 #     c5, p5 = downsample_block(p4, 1024, activation, batchnorm, droprate)
     
     ''' UPSAMPLE '''
 #     c6 = upsample_block(c5, c4, 128, activation, batchnorm, droprate)
-    c5 = upsample_block(c4, c3, 256, activation, batchnorm, droprate)
-    c6 = upsample_block(c3, c2, 128, activation, batchnorm, droprate)
-    c7 = upsample_block(c2, c1, 64, activation, batchnorm, droprate)
+    c5 = upsample_block(c4, c3, 256, activation, batchnorm, droprate, regularizer)
+    c6 = upsample_block(c3, c2, 128, activation, batchnorm, droprate, regularizer)
+    c7 = upsample_block(c2, c1, 64, activation, batchnorm, droprate, regularizer)
     
     outputs = Conv2D(1, (1, 1), activation='sigmoid')(c7)
 #     outputs = Lambda(lambda image: K.tf.image.resize_images(image, (1200, 1920)))(outputs)

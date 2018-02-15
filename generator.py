@@ -1,25 +1,28 @@
 import threading
 from random import shuffle, seed 
-from skimage import transform
 import pandas as pd 
 import numpy as np 
-import cv2 
 import os 
-import matplotlib.pyplot as plt  
+import matplotlib.pyplot as plt 
 
+from PIL import Image
+from PIL.ImageEnhance import Brightness, Contrast
+
+from keras.preprocessing import image
 
 class Generator:  
     
-    def __init__(self, labels_file='labels.csv', batch_size=32, 
-                 scale = 3, val_split = 0.2, train=True, 
+    def __init__(self, labels_file='labels.csv', batch_size=32, val_split = 0.2, train=True, 
+                 scale = 3, min_area = 1200, 
                  flip=False, rotate=False, translate=False, brightness=False):
         
-        self.batch_size = batch_size
-        self.lock = threading.Lock()
-        self.image_IDs = None
-        self.labels = None
-        self.val_split = val_split
-        self.train = train
+        self.batch_size = batch_size  #batch size 
+        self.min_area = min_area      #the minimum area of a car in the image in pixels 
+        self.lock = threading.Lock()  #for multithreading on next()
+        self.image_IDs = None         #the image IDs in the dataframe 
+        self.labels = None            #.csv file
+        self.val_split = val_split    #validatin split fraction 
+        self.train = train            #float - whether this is a training or validation generator 
         self.scale = tuple([int(x/scale) for x in (1200, 1920)])
         
         # call to set up labels
@@ -68,62 +71,65 @@ class Generator:
         '''read in the image and color correction'''
         self.curr_img_info = self.labels[self.labels.Frame == img_name] #all IDs in that jpg
         im_path = os.path.join('../crowdai', img_name)
-        self.img = cv2.cvtColor(cv2.imread(im_path), cv2.COLOR_BGR2RGB)
+        self.img = image.load_img(im_path)
+    
+    def get_area(self, x): return (x.ymax - x.xmax) * (x.ymin - x.xmin)
     
     def create_mask(self): 
         '''create a vehicle mask from the image'''
-        self.mask = np.zeros(shape=self.img.shape[:2])
+        self.mask = np.zeros(shape=(1200, 1920))
     
         for i in range(self.curr_img_info.shape[0]):
             vehicle_ID = self.curr_img_info.iloc[i]
-            self.mask[vehicle_ID.xmax:vehicle_ID.ymax,
-                    vehicle_ID.xmin:vehicle_ID.ymin ] = 1
+            
+            #thresold small cars out 
+            area = self.get_area(vehicle_ID)
+            if area > self.min_area: 
+                self.mask[vehicle_ID.xmax:vehicle_ID.ymax,
+                          vehicle_ID.xmin:vehicle_ID.ymin ] = 1
+        
+        self.mask = np.expand_dims(self.mask, axis=2)
+        self.mask = image.array_to_img(self.mask)
             
     def flip_img(self):
-        '''50/50 odds to randomly flip the image and reverse the steering angle'''
+        '''50/50 odds to randomly flip the image'''
         if np.random.randint(0, 2): 
-            self.img = np.flip(self.img, axis=1) 
-            self.mask = np.flip(self.mask, axis=1) 
+            self.img = self.img.transpose(Image.FLIP_LEFT_RIGHT)
+            self.mask = self.mask.transpose(Image.FLIP_LEFT_RIGHT)
             
     def rotate_img(self): 
-        '''50/50 odds to rotate the image by +/- 7 degrees'''
+        '''50/50 odds to rotate the image and mask by +/- 6 degrees'''
         if np.random.randint(0, 2):
-            angle = (np.random.random()-0.5)*14 #[-7, 7]
-            self.img = transform.rotate(self.img, angle)
-            self.mask = transform.rotate(self.mask, angle)
+            angle = np.random.random() * 12 - 6
+            self.img = self.img.rotate(angle)
+            self.mask = self.mask.rotate(angle)
 
     def translate_img(self):
-        '''50/50 odds to randomly shift the img
-            by +/- 100 pixels in x and/or y direction'''
-#         https://stackoverflow.com/questions/27087139/shifting-an-image-in-numpy
-#         faster than matrix transform 
+        '''50/50 odds to shift the img asn mask
+            by +/- 50 pixels in x and/or y direction'''
         if np.random.randint(0, 2):
-            ox = int((np.random.random()-0.5)*200)
-            oy = int((np.random.random()-0.5)*200)
-            shift_img = np.zeros_like(self.img)
-            shift_mask = np.zeros_like(self.mask)
-            
-            #transformation points 
-            x1n, x2n, y1n, y2n = self.mom(oy), self.non(oy), self.mom(ox), self.non(ox)
-            x1o, x2o, y1o, y2o = self.mom(-oy), self.non(-oy), self.mom(-ox), self.non(-ox)
-            
-            #perform the shifts 
-            shift_img[x1n:x2n, y1n:y2n] = self.img[x1o:x2o, y1o:y2o]
-            shift_mask[x1n:x2n, y1n:y2n] = self.mask[x1o:x2o, y1o:y2o]
-            self.img = shift_img
-            self.mask = shift_mask
+            # (ax+by+c, dx+ey+f)
+            # c, f = left/right, up.down
+            a, b, d, e = 1, 0, 0, 1
+            c, f = np.random.uniform(-50, 50), np.random.uniform(-50, 50)
+            self.img = self.img.transform(self.img.size, Image.AFFINE, (a, b, c, d, e, f))
+            self.mask = self.mask.transform(self.img.size, Image.AFFINE, (a, b, c, d, e, f))
             
     def jitter_brightness(self):
-        '''jitter the brightness in the HSV space'''
-        temp = cv2.cvtColor(self.img,cv2.COLOR_RGB2HSV)
-        random_bright = .25+np.random.uniform()
-        temp[:,:,2] = temp[:,:,2]*random_bright
-        self.img = cv2.cvtColor(temp,cv2.COLOR_HSV2RGB)
+        '''jitter the brightness of img'''
+        if np.random.randint(0, 2) == 0:
+            self.img = Contrast(self.img).enhance(np.random.uniform(.5, 2.2))
+        if np.random.randint(0, 2) == 0:
+            self.img = Brightness(self.img).enhance(np.random.uniform(.5, 1.5))
         
-    def resize(self): 
-        self.img = cv2.resize(self.img, (self.scale[1], self.scale[0]))
-        self.mask = cv2.resize(self.mask, (self.scale[1], self.scale[0]))
-
+    def process(self): 
+        '''resize and convert PIL images to arrays'''
+        self.img = self.img.resize(self.scale[::-1])
+        self.mask = self.mask.resize(self.scale[::-1])
+        
+        self.img = 256.-image.img_to_array(self.img)
+        self.mask = image.img_to_array(self.mask).reshape(self.scale)
+        
     def __next__(self): 
         '''Yields data tensor of size [batch_size, 1200, 1920, 1], 
         label tensor of size [batch_size, 1]. GPU compatible. '''
@@ -132,24 +138,28 @@ class Generator:
         with self.lock:      
             for i in range(self.num_batches):
                 img_batch_files = self.image_IDs[self.start:self.end]
+                
                 for j, img_name in enumerate(img_batch_files): 
-                    # print (j, img_name)
+                    
                     self.read_image(img_name)
                     self.create_mask()
                     
                     #augment image and mask 
                     if self.flip: self.flip_img() 
                     if self.translate: self.translate_img() 
-#                     if self.rotate: self.rotate_img() #SLOW 
+                    if self.rotate: self.rotate_img()
                     if self.brightness: self.jitter_brightness()
-                
-                    self.resize()
+        
+                    #resize and cvt to array 
+                    self.process()
                     
-#                     plt.imshow(self.img)
-#                     plt.show()
-#                     plt.imshow(self.mask)
-#                     plt.show()
-                                        
+                    #for debugging 
+                    #print (j, img_name)
+                    plt.imshow(self.img)
+                    plt.show()
+                    plt.imshow(self.mask)
+                    plt.show()
+              
                     self.X_batch[j, :, :, :] = self.img.reshape(self.scale[0], self.scale[1], 3)
                     self.y_batch[j, :, :, :] = self.mask.reshape(self.scale[0], self.scale[1], 1)
 
