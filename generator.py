@@ -127,8 +127,9 @@ class Generator:
         self.img = self.img.resize(self.scale[::-1])
         self.mask = self.mask.resize(self.scale[::-1])
         
-        self.img = 256.-image.img_to_array(self.img)
-        self.mask = image.img_to_array(self.mask).reshape(self.scale)
+        #scale from 255 -> 1 to match output of old generator 
+        self.img = image.img_to_array(self.img)
+        self.mask = image.img_to_array(self.mask).reshape(self.scale) / 255
         
     def __next__(self): 
         '''Yields data tensor of size [batch_size, 1200, 1920, 1], 
@@ -155,10 +156,10 @@ class Generator:
                     
                     #for debugging 
                     #print (j, img_name)
-                    plt.imshow(self.img)
-                    plt.show()
-                    plt.imshow(self.mask)
-                    plt.show()
+                    # plt.imshow(self.img)
+                    # plt.show()
+                    # plt.imshow(self.mask)
+                    # plt.show()
               
                     self.X_batch[j, :, :, :] = self.img.reshape(self.scale[0], self.scale[1], 3)
                     self.y_batch[j, :, :, :] = self.mask.reshape(self.scale[0], self.scale[1], 1)

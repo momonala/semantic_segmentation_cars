@@ -58,7 +58,9 @@ def upsample_block(IN, DOWN, filters, activation, batchnorm, droprate, regulariz
 
 
 
-def build_model(scale_factor = 3, activation='elu', learn_rate = 0.001, batchnorm=False, droprate = None, regularizer = None, verbose=0):
+def build_model(scale_factor = 3, activation='elu', loss=IOU_inverse, learn_rate = 0.001,
+                batchnorm=False, droprate = None, regularizer = None, verbose=0):
+                
     '''Build a Unet! 
     https://arxiv.org/abs/1505.04597
     https://github.com/pietz/unet-keras/blob/master/unet.py
@@ -103,8 +105,8 @@ def build_model(scale_factor = 3, activation='elu', learn_rate = 0.001, batchnor
 
     model = Model (inputs=[inputs], outputs = [outputs])
     model.compile(optimizer = RMSprop(lr=learn_rate), 
-                  loss = IOU_inverse,
-                 metrics = [IOU_loss])
+                  loss = loss,
+                  metrics = [IOU_loss])
     
     if verbose: 
         model.summary()
